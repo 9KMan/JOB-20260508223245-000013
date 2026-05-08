@@ -31,3 +31,7 @@ dist/
 
 # Test coverage
 coverage/
+# Worker internal (do not commit)
+pid
+role
+worker.log
