@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Proposal files (do not commit)
+PROPOSAL.md
+COVER_LETTER.txt
+
+# Build outputs
+build/
+dist/
+
+# Test coverage
+coverage/

@@ -1,0 +1,240 @@
+# SPEC.md — Voice Agent Software Integration for Collections Platform
+
+## 1. Project Overview
+
+**Client:** Collections platform (debt collection software provider)
+**Goal:** Integrate voice agent software (VAPI + Vicidial) into an existing React/Node.js/MongoDB collections platform.
+**Stack:** React (frontend), Node.js (backend), MongoDB (database), VAPI (voice AI), Vicidial (call center)
+
+---
+
+## 2. Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Collections Platform                         │
+│  ┌───────────────┐  ┌───────────────┐  ┌────────────────────┐  │
+│  │  React SPA    │  │  Node.js API  │  │     MongoDB         │  │
+│  │  (Frontend)   │  │  (Express)    │  │  (Collections DB)   │  │
+│  └───────┬───────┘  └───────┬───────┘  └──────────┬─────────┘  │
+│          │                  │                     │              │
+│          └──────────────────┼─────────────────────┘              │
+│                             │                                    │
+│                    ┌────────┴────────┐                          │
+│                    │  Voice Layer    │                          │
+│                    │  (VAPI + Vicidial) │                       │
+│                    └────────┬────────┘                          │
+│                             │                                   │
+│              ┌──────────────┼──────────────┐                   │
+│              ▼              ▼              ▼                    │
+│        ┌──────────┐  ┌──────────┐  ┌──────────┐               │
+│        │ Inbound   │  │ Outbound │  │ Agent    │               │
+│        │ Voice AI │  │ Dialer   │  │ Dashboard│               │
+│        │ (VAPI)   │  │ (Vicidial)│  │ (React)  │               │
+│        └──────────┘  └──────────┘  └──────────┘               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Core Workstreams
+
+### 3.1 VAPI Integration
+
+VAPI is a voice AI platform that provides:
+- Inbound/outbound voice calls via WebRTC
+- AI agent loops with tool use (LLM-powered voice agents)
+- Real-time transcription + sentiment analysis
+- Conference calling, DTMF handling
+
+**Integration points:**
+- VAPI SDK → Node.js backend (webhooks for call events)
+- VAPI → React frontend (call status via WebSocket/SSE)
+- VAPI → MongoDB (call logs, transcriptions, analytics)
+
+**Key endpoints:**
+- `/api/vapi/create-call` — initiate outbound call
+- `/api/vapi/webhook` — receive VAPI call events (answered, completed, transcript)
+- `/api/vapi/end-call` — terminate active call
+- `/api/vapi/get-call-status` — real-time call state
+
+### 3.2 Vicidial Integration
+
+Vicidial is open-source call center software. It handles:
+- Outbound dialer (predictive/power/automatic modes)
+- Agent phone interface (browser-based)
+- Call recording + quality management
+
+**Integration points:**
+- Vicidial API (admin interface) → MongoDB sync
+- Vicidial call logs → MongoDB for analytics
+- Agent status → WebSocket → React dashboard
+- Lead data pulled from MongoDB → Vicidial for dialing
+
+**Key endpoints:**
+- `/api/vicidial/leads` — fetch leads from Vicidial
+- `/api/vicidial/agent-status` — real-time agent state
+- `/api/vicidial/disposition` — write call disposition back
+- `/api/vicidial/call-recording` — stream/playback recordings
+
+### 3.3 React Frontend — Agent Dashboard
+
+- **Call Control Panel:** Hang up, hold, transfer, mute, keypad
+- **Live Call Stats:** Duration, queue position, agent status
+- **Contact Info Panel:** Display account details during call (from MongoDB)
+- **Script Panel:** Collection scripts displayed during call
+- **Disposition Buttons:** Log outcome (promise to pay, no answer, DNC, etc.)
+- **Real-time Updates:** WebSocket for call state, agent status, queue updates
+
+### 3.4 Node.js Backend — Core Services
+
+- **Call Orchestration Service:** Coordinate VAPI + Vicidial calls, manage call routing
+- **Lead Management:** CRUD for collections leads (from MongoDB)
+- **Disposition Processing:** Receive call outcomes, update lead status, trigger follow-ups
+- **Webhook Handler:** Process VAPI + Vicidial webhooks, normalize data, write to MongoDB
+- **Agent Session Service:** Track active calls per agent, manage state machine
+
+### 3.5 MongoDB Data Model
+
+```javascript
+// Collections / Leads
+{
+  _id: ObjectId,
+  phone: String,
+  firstName: String,
+  lastName: String,
+  accountNumber: String,
+  balance: Number,
+  status: String, // 'new' | 'assigned' | 'called' | 'promised' | 'paid' | 'closed'
+  assignedAgent: String,
+  lastCallDate: Date,
+  lastDisposition: String,
+  notes: [{ text: String, agent: String, ts: Date }]
+}
+
+// Call Logs
+{
+  _id: ObjectId,
+  direction: String, // 'inbound' | 'outbound'
+  leadId: ObjectId,
+  agentId: String,
+  vapiCallId: String,
+  vicidialLeadId: String,
+  startTime: Date,
+  endTime: Date,
+  duration: Number,
+  disposition: String,
+  recordingUrl: String,
+  transcript: String,
+  sentiment: String // 'positive' | 'neutral' | 'negative'
+}
+
+// Agent Sessions
+{
+  _id: ObjectId,
+  agentId: String,
+  status: String, // 'available' | 'on-call' | 'wrap-up' | 'break'
+  currentCallId: ObjectId,
+  loginTime: Date,
+  callsToday: Number
+}
+
+// Queue
+{
+  _id: ObjectId,
+  queueName: String,
+  waiting: Number,
+  avgWaitTime: Number,
+  agentsOnline: Number
+}
+```
+
+---
+
+## 4. Technical Decisions
+
+1. **VAPI for AI-powered inbound:** VAPI's AI agent loops handle inbound calls with LLM reasoning — natural language IVR without僵硬 phone trees
+2. **Vicidial for outbound dialing:** Vicidial's predictive dialer is purpose-built for collections — use it for outbound, VAPI for inbound AI
+3. **MongoDB for lead/call data:** Natural fit for collections data (variable schemas per client), works well with Node.js
+4. **WebSocket (Socket.io or SSE) for real-time:** Agent dashboard needs live call state, queue updates, typing indicators
+5. **Webhook normalization layer:** VAPI and Vicidial have different webhook formats — normalize to internal schema before MongoDB write
+6. **Node.js worker processes:** Webhook handlers and call orchestration run as separate worker processes (not blocking the main Express thread)
+7. **React Context + useReducer for call state:** Simple state management for call control panel (no Redux needed for this scope)
+
+---
+
+## 5. API Design
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/vapi/create-call` | Initiate outbound VAPI call |
+| `POST` | `/api/vapi/webhook` | VAPI webhook receiver |
+| `POST` | `/api/vicidial/webhook` | Vicidial webhook receiver |
+| `GET` | `/api/leads` | List leads (paginated, filterable) |
+| `POST` | `/api/leads` | Create new lead |
+| `GET` | `/api/leads/:id` | Get lead details |
+| `PUT` | `/api/leads/:id/disposition` | Log call disposition |
+| `GET` | `/api/agents/:id/status` | Agent session status |
+| `PUT` | `/api/agents/:id/status` | Update agent status |
+| `GET` | `/api/calls/active` | List active calls |
+| `GET` | `/api/calls/:id/recording` | Stream recording |
+| `GET` | `/api/queue/stats` | Real-time queue stats |
+| `GET` | `/api/calls/:id/transcript` | Get call transcript |
+
+---
+
+## 6. VAPI + Vicidial Integration Details
+
+### VAPI Configuration
+```javascript
+{
+  name: "Collections AI Agent",
+  model: "gpt-4",
+  voice: "sage", // or configure custom voice
+  transcript: {
+    enterprise: true // enable full transcript
+  },
+  end_call_message: "Thank you for your time. Have a great day.",
+  actions: [
+    {
+      type: "function",
+      name: "lookup_account",
+      description: "Look up account by phone number",
+      parameters: { phone: "string" }
+    },
+    {
+      type: "function",
+      name: "log_disposition",
+      description: "Log call outcome",
+      parameters: { disposition: "string", notes: "string" }
+    }
+  ]
+}
+```
+
+### Vicidial API (Admin Panel)
+- Pull lead list via `GET /vicidial/admin_search.php`
+- Post dispositions via `POST /vicidial/agc/disposition.php`
+- Agent status via `GET /vicidial/user_stats.php`
+- Call recordings accessible via `/recordings/`
+
+---
+
+## 7. Out of Scope (V1)
+
+- SMS/email outreach (voice only)
+- Full CRM features (lead management only, not account management)
+- Predictive scoring / ML-based prioritization
+- Multi-tenant support (single client V1)
+- Payment processing integration
+- Compliance recording (beyond basic call recording)
+
+---
+
+## 8. Success Metrics (V1)
+
+- [ ] VAPI inbound AI agent answers calls, looks up account, logs disposition
+- [ ] Vicidial outbound dialer connects calls to agents via React dashboard
+- [ ] Agent can see live call stats (duration, queue, lead info) during call
+- [ ] Call recordings stored and accessible from MongoDB records
+- [ ] Lead status updates flow correctly between VAPI → MongoDB → Vicidial
